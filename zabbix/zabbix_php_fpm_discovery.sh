@@ -11,6 +11,8 @@
 # After this duration is reached, the script will stop running and save its state.
 # So, the actual execution time will be slightly more than this parameter.
 # We put value equivalent to 1.5 seconds here.
+set -o errexit -o pipefail
+
 MAX_EXECUTION_TIME="1500"
 
 #Status path used in calls to PHP-FPM
@@ -34,101 +36,34 @@ CACHE_DIR_NAME="zabbix-php-fpm"
 #Full path to directory to store cache files
 CACHE_DIRECTORY="$CACHE_ROOT/$CACHE_DIR_NAME"
 
-#Checking all the required executables
-S_PS=$(type -P ps)
-S_GREP=$(type -P grep)
-S_AWK=$(type -P awk)
-S_SORT=$(type -P sort)
-S_UNIQ=$(type -P uniq)
-S_HEAD=$(type -P head)
-S_LSOF=$(type -P lsof)
-S_JQ=$(type -P jq)
-S_DIRNAME=$(type -P dirname)
-S_CAT=$(type -P cat)
-S_BASH=$(type -P bash)
-S_PRINTF=$(type -P printf)
-S_WHOAMI=$(type -P whoami)
-S_DATE=$(type -P date)
-S_BC=$(type -P bc)
-S_SLEEP=$(type -P sleep)
-S_FCGI=$(type -P cgi-fcgi)
+# Converts input to lower-case
+function to_upper() {
+   cat | awk '{ print toupper($0) }'
+}
 
-if [[ ! -x $S_PS ]]; then
-  echo "Utility 'ps' not found. Please, install it first."
-  exit 1
-fi
-if [[ ! -x $S_GREP ]]; then
-  echo "Utility 'grep' not found. Please, install it first."
-  exit 1
-fi
-if [[ ! -x $S_AWK ]]; then
-  echo "Utility 'awk' not found. Please, install it first."
-  exit 1
-fi
-if [[ ! -x $S_SORT ]]; then
-  echo "Utility 'sort' not found. Please, install it first."
-  exit 1
-fi
-if [[ ! -x $S_UNIQ ]]; then
-  echo "Utility 'uniq' not found. Please, install it first."
-  exit 1
-fi
-if [[ ! -x $S_HEAD ]]; then
-  echo "Utility 'head' not found. Please, install it first."
-  exit 1
-fi
-if [[ ! -x $S_LSOF ]]; then
-  echo "Utility 'lsof' not found. Please, install it first."
-  exit 1
-fi
-if [[ ! -x $S_JQ ]]; then
-  echo "Utility 'jq' not found. Please, install it first."
-  exit 1
-fi
-if [[ ! -x ${S_DIRNAME} ]]; then
-  echo "Utility 'dirname' not found. Please, install it first."
-  exit 1
-fi
-if [[ ! -x ${S_CAT} ]]; then
-  echo "Utility 'cat' not found. Please, install it first."
-  exit 1
-fi
-if [[ ! -x ${S_BASH} ]]; then
-  echo "Utility 'bash' not found. Please, install it first."
-  exit 1
-fi
-if [[ ! -x ${S_PRINTF} ]]; then
-  echo "Utility 'printf' not found. Please, install it first."
-  exit 1
-fi
-if [[ ! -x ${S_WHOAMI} ]]; then
-  echo "Utility 'whoami' not found. Please, install it first."
-  exit 1
-fi
-if [[ ! -x ${S_DATE} ]]; then
-  echo "Utility 'date' not found. Please, install it first."
-  exit 1
-fi
-if [[ ! -x $S_BC ]]; then
-  echo "Utility 'bc' not found. Please, install it first."
-  exit 1
-fi
-if [[ ! -x $S_SLEEP ]]; then
-  echo "Utility 'sleep' not found. Please, install it first."
-  exit 1
-fi
-if [[ ! -x $S_FCGI ]]; then
-  echo "Utility 'cgi-fcgi' not found. Please, install it first."
-  exit 1
-fi
+#Checking all the required executables
+declare -a REQUIRED_BINS=("ps" "grep" "awk" "sort" "uniq" "head" "lsof" "jq" "dirname" "cat" "bash" "printf" "whoami" "date" "bc" "sleep" "cgi-fcgi")
+declare -A S_BIN
+SONE_BINS_NOT_FOUND=
+
+for BIN in "${REQUIRED_BINS[@]}"; do
+  BIN_UPPER="$(echo "$BIN" | to_upper)"
+  S_BIN[$BIN_UPPER]="$(type -P $BIN)"
+  if [[ -z "${S_BIN[$BIN_UPPER]}" || ! -x "${S_BIN[$BIN_UPPER]}" ]]; then
+    SONE_BINS_NOT_FOUND=yes
+    echo "Utility '${BIN}' not found. Please, install it first."
+  fi
+done
+
+[[ "$SONE_BINS_NOT_FOUND" = "yes" ]] && exit 1
 
 if [[ "${BASH_VERSINFO:-0}" -lt 4 ]]; then
-  ${S_ECHO} "This script requires bash version 4.x or newer. Older version detected."
+  ${S_BIN["ECHO"]} "This script requires bash version 4.x or newer. Older version detected."
   exit 1
 fi
 
 if [[ ! -d "$CACHE_ROOT" ]]; then
-  ${S_ECHO} "The OS cache directory '$CACHE_ROOT' not found in the system."
+  ${S_BIN["ECHO"]} "The OS cache directory '$CACHE_ROOT' not found in the system."
   exit 1
 fi
 
@@ -153,12 +88,12 @@ function createCacheDirectory() {
 createCacheDirectory
 EXIT_CODE=$?
 if [[ ${EXIT_CODE} -ne 0 ]]; then
-  ${S_ECHO} "Failed to create cache directory '$CACHE_DIRECTORY'."
+  ${S_BIN["ECHO"]} "Failed to create cache directory '$CACHE_DIRECTORY'."
   exit 1
 fi
 
 #Local directory
-LOCAL_DIR=$(${S_DIRNAME} "$0")
+LOCAL_DIR=$(${S_BIN["DIRNAME"]} "$0")
 
 #Cache file for pending pools, used to store execution state
 #File format:
@@ -174,9 +109,9 @@ RESULTS_CACHE_FILE="$CACHE_DIRECTORY/php_fpm_results.cache"
 STATUS_SCRIPT="$LOCAL_DIR/zabbix_php_fpm_status.sh"
 
 #Start time of the script
-START_TIME=$($S_DATE +%s%N)
+START_TIME=$(${S_BIN["DATE"]} +%s%N)
 
-ACTIVE_USER=$(${S_WHOAMI})
+ACTIVE_USER=$(${S_BIN["WHOAMI"]})
 
 # Prints a string on screen. Works only if debug mode is enabled.
 function PrintDebug() {
@@ -198,9 +133,9 @@ function EncodeToJson() {
   fi
 
   local JSON_POOL
-  JSON_POOL=$(echo -n "$POOL_NAME" | ${S_JQ} -aR .)
+  JSON_POOL=$(echo -n "$POOL_NAME" | ${S_BIN["JQ"]} -aR .)
   local JSON_SOCKET
-  JSON_SOCKET=$(echo -n "$POOL_SOCKET" | ${S_JQ} -aR .)
+  JSON_SOCKET=$(echo -n "$POOL_SOCKET" | ${S_BIN["JQ"]} -aR .)
   if [[ ${POOL_FIRST} == 1 ]]; then
     RESULT_DATA="$RESULT_DATA,"
   fi
@@ -230,15 +165,15 @@ function UpdatePoolInCache() {
 
     local ITEM_NAME
     # shellcheck disable=SC2016
-    ITEM_NAME=$(echo "$CACHE_ITEM" | ${S_AWK} '{print $1}')
+    ITEM_NAME=$(echo "$CACHE_ITEM" | ${S_BIN["AWK"]} '{print $1}')
 
     local ITEM_SOCKET
     # shellcheck disable=SC2016
-    ITEM_SOCKET=$(echo "$CACHE_ITEM" | ${S_AWK} '{print $2}')
+    ITEM_SOCKET=$(echo "$CACHE_ITEM" | ${S_BIN["AWK"]} '{print $2}')
 
     local ITEM_POOL_TYPE
     # shellcheck disable=SC2016
-    ITEM_POOL_TYPE=$(echo "$CACHE_ITEM" | ${S_AWK} '{print $3}')
+    ITEM_POOL_TYPE=$(echo "$CACHE_ITEM" | ${S_BIN["AWK"]} '{print $3}')
     if [[ $ITEM_NAME == "$POOL_NAME" && $ITEM_SOCKET == "$POOL_SOCKET" ]] || [[ -z $ITEM_POOL_TYPE ]]; then
       PrintDebug "Pool $POOL_NAME $POOL_SOCKET is in cache, deleting..."
       #Deleting the pool first
@@ -266,15 +201,15 @@ function UpdateCacheList() {
 
     local ITEM_NAME
     # shellcheck disable=SC2016
-    ITEM_NAME=$(echo "$CACHE_ITEM" | ${S_AWK} '{print $1}')
+    ITEM_NAME=$(echo "$CACHE_ITEM" | ${S_BIN["AWK"]} '{print $1}')
 
     local ITEM_SOCKET
     # shellcheck disable=SC2016
-    ITEM_SOCKET=$(echo "$CACHE_ITEM" | ${S_AWK} '{print $2}')
+    ITEM_SOCKET=$(echo "$CACHE_ITEM" | ${S_BIN["AWK"]} '{print $2}')
 
     local ITEM_POOL_TYPE
     # shellcheck disable=SC2016
-    ITEM_POOL_TYPE=$(echo "$CACHE_ITEM" | ${S_AWK} '{print $3}')
+    ITEM_POOL_TYPE=$(echo "$CACHE_ITEM" | ${S_BIN["AWK"]} '{print $3}')
 
     if [[ $ITEM_NAME == "$POOL_NAME" && $ITEM_SOCKET == "$POOL_SOCKET" ]] || [[ -z $ITEM_POOL_TYPE ]]; then
       PrintDebug "Pool $POOL_NAME $POOL_SOCKET is in cache, deleting..."
@@ -380,10 +315,10 @@ function SavePrintResults() {
   fi
 
   PrintDebug "Saving pending pools list to file $PENDING_FILE..."
-  ${S_PRINTF} "%s\n" "${PENDING_LIST[@]}" >"$PENDING_FILE"
+  ${S_BIN["PRINTF"]} "%s\n" "${PENDING_LIST[@]}" >"$PENDING_FILE"
 
   #We must sort the cache list
-  readarray -t CACHE < <(for a in "${CACHE[@]}"; do echo "$a"; done | $S_SORT)
+  readarray -t CACHE < <(for a in "${CACHE[@]}"; do echo "$a"; done | ${S_BIN["SORT"]})
 
   if [[ -n $DEBUG_MODE ]]; then
     PrintDebug "List of pools to be saved to cache pools file:"
@@ -396,7 +331,7 @@ function SavePrintResults() {
   fi
 
   PrintDebug "Saving cache file to file $RESULTS_CACHE_FILE..."
-  ${S_PRINTF} "%s\n" "${CACHE[@]}" >"$RESULTS_CACHE_FILE"
+  ${S_BIN["PRINTF"]} "%s\n" "${CACHE[@]}" >"$RESULTS_CACHE_FILE"
 
   POOL_FIRST=0
   #We store the resulting JSON data for Zabbix in the following var:
@@ -405,11 +340,11 @@ function SavePrintResults() {
   for CACHE_ITEM in "${CACHE[@]}"; do
     local ITEM_NAME
     # shellcheck disable=SC2016
-    ITEM_NAME=$(echo "$CACHE_ITEM" | ${S_AWK} '{print $1}')
+    ITEM_NAME=$(echo "$CACHE_ITEM" | ${S_BIN["AWK"]} '{print $1}')
 
     local ITEM_SOCKET
     # shellcheck disable=SC2016
-    ITEM_SOCKET=$(echo "$CACHE_ITEM" | ${S_AWK} '{print $2}')
+    ITEM_SOCKET=$(echo "$CACHE_ITEM" | ${S_BIN["AWK"]} '{print $2}')
     EncodeToJson "${ITEM_NAME}" "${ITEM_SOCKET}"
   done
 
@@ -420,10 +355,10 @@ function SavePrintResults() {
 
 function CheckExecutionTime() {
   local CURRENT_TIME
-  CURRENT_TIME=$($S_DATE +%s%N)
+  CURRENT_TIME=$(${S_BIN["DATE"]} +%s%N)
 
   local ELAPSED_TIME
-  ELAPSED_TIME=$(echo "($CURRENT_TIME - $START_TIME)/1000000" | $S_BC)
+  ELAPSED_TIME=$(echo "($CURRENT_TIME - $START_TIME)/1000000" | ${S_BIN["BC"]})
   if [[ $ELAPSED_TIME -lt $MAX_EXECUTION_TIME ]]; then
     #All good, we can continue
     PrintDebug "Check execution time OK, elapsed $ELAPSED_TIME ms"
@@ -452,18 +387,18 @@ function CheckPool() {
   fi
 
   local STATUS_JSON
-  STATUS_JSON=$(${S_BASH} "${STATUS_SCRIPT}" "${POOL_SOCKET}" ${STATUS_PATH})
+  STATUS_JSON=$(${S_BIN["BASH"]} "${STATUS_SCRIPT}" "${POOL_SOCKET}" ${STATUS_PATH})
   local EXIT_CODE=$?
   if [[ ${EXIT_CODE} == 0 ]]; then
     # The exit code is OK, let's check the JSON data
     # JSON data example:
     # {"pool":"www2","process manager":"ondemand","start time":1578181845,"start since":117,"accepted conn":3,"listen queue":0,"max listen queue":0,"listen queue len":0,"idle processes":0,"active processes":1,"total processes":1,"max active processes":1,"max children reached":0,"slow requests":0}
     # We use basic regular expression here, i.e. we need to use \+ and not escape { and }
-    if [[ -n $(echo "${STATUS_JSON}" | ${S_GREP} -G '^{.*\"pool\":\".\+\".*,\"process manager\":\".\+\".*}$') ]]; then
+    if [[ -n $(echo "${STATUS_JSON}" | ${S_BIN["GREP"]} -G '^{.*\"pool\":\".\+\".*,\"process manager\":\".\+\".*}$') ]]; then
       PrintDebug "Status data for pool $POOL_NAME, socket $POOL_SOCKET, status path $STATUS_PATH is valid"
 
       local PROCESS_MANAGER
-      PROCESS_MANAGER=$(echo "$STATUS_JSON" | $S_GREP -oP '"process manager":"\K([a-z]+)')
+      PROCESS_MANAGER=$(echo "$STATUS_JSON" | ${S_BIN["GREP"]} -oP '"process manager":"\K([a-z]+)')
       if [[ -n $PROCESS_MANAGER ]]; then
         PrintDebug "Detected pool's process manager is $PROCESS_MANAGER"
         UpdatePoolInCache "$POOL_NAME" "$POOL_SOCKET" "$PROCESS_MANAGER"
@@ -490,7 +425,7 @@ function CheckPool() {
 function sleepNow() {
   if [[ -n $USE_SLEEP_TIMEOUT ]]; then
     PrintDebug "Debug: Sleep for $SLEEP_TIMEOUT sec"
-    $S_SLEEP "$SLEEP_TIMEOUT"
+    ${S_BIN["SLEEP"]} "$SLEEP_TIMEOUT"
     CheckExecutionTime
   fi
 }
@@ -505,7 +440,7 @@ function AnalyzePool() {
 
   local POOL_PID_LIST
   # shellcheck disable=SC2016
-  POOL_PID_LIST=$(${S_PRINTF} '%s\n' "${PS_LIST[@]}" | $S_GREP -F -w "php-fpm: pool $POOL_NAME" | $S_AWK '{print $1}')
+  POOL_PID_LIST=$(${S_BIN["PRINTF"]} '%s\n' "${PS_LIST[@]}" | ${S_BIN["GREP"]} -F -w "php-fpm: pool $POOL_NAME" | ${S_BIN["AWK"]} '{print $1}')
   local POOL_PID_ARGS=""
   while IFS= read -r POOL_PID; do
     if [[ -n $POOL_PID ]]; then
@@ -535,17 +470,17 @@ function AnalyzePool() {
     #Sorting is required, because uniq needs it
     local POOL_PARAMS_LIST
     # shellcheck disable=SC2086
-    POOL_PARAMS_LIST=$($S_LSOF -n -P $POOL_PID_ARGS 2>/dev/null | $S_GREP -w -e "unix" -e "TCP" | $S_SORT -u | $S_UNIQ -f8)
+    POOL_PARAMS_LIST=$(${S_BIN["LSOF"]} -n -P $POOL_PID_ARGS 2>/dev/null | ${S_BIN["GREP"]} -w -e "unix" -e "TCP" | ${S_BIN["SORT"]} -u | ${S_BIN["UNIQ"]} -f8)
     local FOUND_POOL=""
     while IFS= read -r pool; do
       if [[ -n $pool ]]; then
         PrintDebug "Checking process: $pool"
         local POOL_TYPE
         # shellcheck disable=SC2016
-        POOL_TYPE=$(echo "${pool}" | $S_AWK '{print $5}')
+        POOL_TYPE=$(echo "${pool}" | ${S_BIN["AWK"]} '{print $5}')
         local POOL_SOCKET
         # shellcheck disable=SC2016
-        POOL_SOCKET=$(echo "${pool}" | $S_AWK '{print $9}')
+        POOL_SOCKET=$(echo "${pool}" | ${S_BIN["AWK"]} '{print $9}')
         if [[ -n $POOL_TYPE ]] && [[ -n $POOL_SOCKET ]]; then
           if [[ $POOL_TYPE == "unix" ]]; then
             #We have a socket here, test if it's actually a socket:
@@ -560,11 +495,11 @@ function AnalyzePool() {
             #We have a TCP connection here, check it:
             local CONNECTION_TYPE
             # shellcheck disable=SC2016
-            CONNECTION_TYPE=$(echo "${pool}" | $S_AWK '{print $8}')
+            CONNECTION_TYPE=$(echo "${pool}" | ${S_BIN["AWK"]} '{print $8}')
             if [[ $CONNECTION_TYPE == "TCP" ]]; then
               #The connection must have state LISTEN:
               local LISTEN
-              LISTEN=$(echo "${pool}" | $S_GREP -F -w "(LISTEN)")
+              LISTEN=$(echo "${pool}" | ${S_BIN["GREP"]} -F -w "(LISTEN)")
               if [[ -n $LISTEN ]]; then
                 #Check and replace * to localhost if it's found. Asterisk means that the PHP listens on
                 #all interfaces.
@@ -605,13 +540,13 @@ function PrintPendingList() {
   for POOL_ITEM in "${PENDING_LIST[@]}"; do
     local POOL_NAME
     # shellcheck disable=SC2016
-    POOL_NAME=$(echo "$POOL_ITEM" | $S_AWK '{print $1}')
+    POOL_NAME=$(echo "$POOL_ITEM" | ${S_BIN["AWK"]} '{print $1}')
     local POOL_SOCKET
     # shellcheck disable=SC2016
-    POOL_SOCKET=$(echo "$POOL_ITEM" | $S_AWK '{print $2}')
+    POOL_SOCKET=$(echo "$POOL_ITEM" | ${S_BIN["AWK"]} '{print $2}')
     if [[ -n "$POOL_NAME" ]] && [[ -n "$POOL_SOCKET" ]]; then
       PrintDebug "#$COUNTER $POOL_NAME $POOL_SOCKET"
-      COUNTER=$(echo "$COUNTER + 1" | $S_BC)
+      COUNTER=$(echo "$COUNTER + 1" | ${S_BIN["BC"]})
     fi
   done
 }
@@ -622,16 +557,16 @@ function PrintCacheList() {
   for POOL_ITEM in "${CACHE[@]}"; do
     local POOL_NAME
     # shellcheck disable=SC2016
-    POOL_NAME=$(echo "$POOL_ITEM" | $S_AWK '{print $1}')
+    POOL_NAME=$(echo "$POOL_ITEM" | ${S_BIN["AWK"]} '{print $1}')
     local POOL_SOCKET
     # shellcheck disable=SC2016
-    POOL_SOCKET=$(echo "$POOL_ITEM" | $S_AWK '{print $2}')
+    POOL_SOCKET=$(echo "$POOL_ITEM" | ${S_BIN["AWK"]} '{print $2}')
     local PROCESS_MANAGER
     # shellcheck disable=SC2016
-    PROCESS_MANAGER=$(echo "$POOL_ITEM" | $S_AWK '{print $3}')
+    PROCESS_MANAGER=$(echo "$POOL_ITEM" | ${S_BIN["AWK"]} '{print $3}')
     if [[ -n "$POOL_NAME" ]] && [[ -n "$POOL_SOCKET" ]] && [[ -n "$PROCESS_MANAGER" ]]; then
       PrintDebug "#$COUNTER $POOL_NAME $POOL_SOCKET $PROCESS_MANAGER"
-      COUNTER=$(echo "$COUNTER + 1" | $S_BC)
+      COUNTER=$(echo "$COUNTER + 1" | ${S_BIN["BC"]})
     fi
   done
 }
@@ -693,7 +628,7 @@ PrintDebug "Helper script $STATUS_SCRIPT is reachable"
 CACHE=()
 if [[ -r $RESULTS_CACHE_FILE ]]; then
   PrintDebug "Reading cache file of pools $RESULTS_CACHE_FILE..."
-  mapfile -t CACHE < <(${S_CAT} "$RESULTS_CACHE_FILE")
+  mapfile -t CACHE < <(${S_BIN["CAT"]} "$RESULTS_CACHE_FILE")
 else
   PrintDebug "Cache file of pools $RESULTS_CACHE_FILE not found, skipping..."
 fi
@@ -707,7 +642,7 @@ fi
 PENDING_LIST=()
 if [[ -r $PENDING_FILE ]]; then
   PrintDebug "Reading file of pending pools $PENDING_FILE..."
-  mapfile -t PENDING_LIST < <($S_CAT "$PENDING_FILE")
+  mapfile -t PENDING_LIST < <(${S_BIN["CAT"]} "$PENDING_FILE")
 else
   PrintDebug "List of pending pools $PENDING_FILE not found, skipping..."
 fi
@@ -717,9 +652,9 @@ if [[ -n $DEBUG_MODE ]]; then
   PrintPendingList
 fi
 
-mapfile -t PS_LIST < <($S_PS ax | $S_GREP -F "php-fpm: pool " | $S_GREP -F -v "grep")
+mapfile -t PS_LIST < <(${S_BIN["PS"]} ax | ${S_BIN["GREP"]} -F "php-fpm: pool " | ${S_BIN["GREP"]} -F -v "grep")
 # shellcheck disable=SC2016
-POOL_NAMES_LIST=$(${S_PRINTF} '%s\n' "${PS_LIST[@]}" | $S_AWK '{print $NF}' | $S_SORT -u)
+POOL_NAMES_LIST=$(${S_BIN["PRINTF"]} '%s\n' "${PS_LIST[@]}" | ${S_BIN["AWK"]} '{print $NF}' | ${S_BIN["SORT"]} -u)
 
 #Update pending list with pools that are active and running
 while IFS= read -r POOL_NAME; do
@@ -736,9 +671,9 @@ PrintDebug "Processing pools"
 
 for POOL_ITEM in "${PENDING_LIST[@]}"; do
   # shellcheck disable=SC2016
-  POOL_NAME=$(echo "$POOL_ITEM" | $S_AWK '{print $1}')
+  POOL_NAME=$(echo "$POOL_ITEM" | ${S_BIN["AWK"]} '{print $1}')
   # shellcheck disable=SC2016
-  POOL_SOCKET=$(echo "$POOL_ITEM" | $S_AWK '{print $2}')
+  POOL_SOCKET=$(echo "$POOL_ITEM" | ${S_BIN["AWK"]} '{print $2}')
   if [[ -n "$POOL_NAME" ]] && [[ -n "$POOL_SOCKET" ]]; then
     ProcessPool "$POOL_NAME" "$POOL_SOCKET"
 
